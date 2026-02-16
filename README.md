@@ -156,3 +156,7 @@ make info   # Listar fontes e objetos
 - Adapte o baudrate/porta conforme seu adaptador (padrões: 38400/115200)
 - Alguns ELM327 clones têm respostas inconsistentes; reenvie comandos ou reinicialize (ATZ)
 - Para Bluetooth, parear o dispositivo antes de executar o scanner
+
+---
+
+<h3 align="center">Feito com ❤️ por <a href="https://github.com/lucasmarques594">Lucas Marques</a></h3>
