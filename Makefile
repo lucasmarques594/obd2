@@ -30,10 +30,14 @@ ALL_SRCS = $(CORE_SRCS) $(BRIDGE_SRCS)
 OBJS = $(ALL_SRCS:%.c=$(BUILD_DIR)/%.o)
 
 LIB_NAME = libobd2_core.a
+SCANNER_BIN = obd2_scanner
 
-.PHONY: all clean dirs check info
+.PHONY: all scanner clean dirs check info
 
 all: dirs $(BUILD_DIR)/$(LIB_NAME)
+
+scanner: all
+	$(CC) $(CFLAGS) test_macos.c -L$(BUILD_DIR) -lobd2_core -lm -o $(SCANNER_BIN)
 
 dirs:
 	@mkdir -p $(BUILD_DIR)/core/ring_buffer
@@ -59,7 +63,7 @@ $(BUILD_DIR)/%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(SCANNER_BIN)
 
 check: $(ALL_SRCS)
 	@echo "Checking syntax..."
