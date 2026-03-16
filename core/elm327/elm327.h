@@ -2,6 +2,7 @@
 #define ELM327_H
 
 #include "../types.h"
+#include "../ring_buffer/ring_buffer.h"
 #include "../error/error_handler.h"
 #include "../logger/logger.h"
 
@@ -51,13 +52,6 @@ typedef enum {
 } ElmResponse_t;
 
 typedef struct {
-    u8 buffer[ELM_RX_BUFFER_SIZE];
-    u16 head;
-    u16 tail;
-    u16 count;
-} ElmRxBuffer_t;
-
-typedef struct {
     char version[32];
     ElmProtocol_t detected_protocol;
     bool echo_off;
@@ -83,7 +77,8 @@ typedef struct {
 typedef struct {
     ElmState_t state;
     ElmInfo_t info;
-    ElmRxBuffer_t rx_buffer;
+    RingBuffer_t rx_ring;
+    u8 rx_storage[ELM_RX_BUFFER_SIZE];
     u8 tx_buffer[ELM_TX_BUFFER_SIZE];
     u16 tx_length;
     u32 cmd_start_time_ms;
