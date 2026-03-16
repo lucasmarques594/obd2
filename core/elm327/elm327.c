@@ -1,4 +1,5 @@
 #include "elm327.h"
+#include "../str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const protocol_strings[] = {
@@ -30,85 +31,14 @@ static const char* const response_strings[] = {
     [ELM_RESP_UNKNOWN] = "UNKNOWN"
 };
 
-static void rx_buffer_init(ElmRxBuffer_t* buf)
-{
-    buf->head = 0U;
-    buf->tail = 0U;
-    buf->count = 0U;
-}
 
-static bool rx_buffer_push(ElmRxBuffer_t* buf, u8 byte)
+static bool rx_ring_contains_prompt(const RingBuffer_t* rb)
 {
-    if (buf->count >= ELM_RX_BUFFER_SIZE) {
+    if (RingBuffer_IsEmpty(rb) == true) {
         return false;
     }
     
-    buf->buffer[buf->head] = byte;
-    buf->head = (buf->head + 1U) % ELM_RX_BUFFER_SIZE;
-    buf->count++;
-    
-    return true;
-}
-
-static bool rx_buffer_pop(ElmRxBuffer_t* buf, u8* byte)
-{
-    if (buf->count == 0U) {
-        return false;
-    }
-    
-    *byte = buf->buffer[buf->tail];
-    buf->tail = (buf->tail + 1U) % ELM_RX_BUFFER_SIZE;
-    buf->count--;
-    
-    return true;
-}
-
-static bool rx_buffer_contains_prompt(const ElmRxBuffer_t* buf)
-{
-    if (buf->count == 0U) {
-        return false;
-    }
-    
-    u16 idx = buf->tail;
-    for (u16 i = 0U; i < buf->count; i++) {
-        if (buf->buffer[idx] == '>') {
-            return true;
-        }
-        idx = (idx + 1U) % ELM_RX_BUFFER_SIZE;
-    }
-    
-    return false;
-}
-
-static bool str_contains(const u8* data, u16 length, const char* pattern)
-{
-    if ((data == NULL_PTR) || (pattern == NULL_PTR) || (length == 0U)) {
-        return false;
-    }
-    
-    size_t pattern_len = 0U;
-    while (pattern[pattern_len] != '\0') {
-        pattern_len++;
-    }
-    
-    if (pattern_len > length) {
-        return false;
-    }
-    
-    for (u16 i = 0U; i <= (length - pattern_len); i++) {
-        bool match = true;
-        for (size_t j = 0U; j < pattern_len; j++) {
-            if (data[i + j] != (u8)pattern[j]) {
-                match = false;
-                break;
-            }
-        }
-        if (match == true) {
-            return true;
-        }
-    }
-    
-    return false;
+    return RingBuffer_Contains(rb, '>');
 }
 
 Result_t Elm327_Init(Elm327_t* elm, const ElmConfig_t* config)
@@ -140,7 +70,7 @@ Result_t Elm327_Init(Elm327_t* elm, const ElmConfig_t* config)
     elm->timeout_ms = ELM_CMD_TIMEOUT_MS;
     elm->tx_length = 0U;
     
-    rx_buffer_init(&elm->rx_buffer);
+    RingBuffer_Init(&elm->rx_ring, elm->rx_storage, ELM_RX_BUFFER_SIZE);
     
     elm->info.version[0] = '\0';
     elm->info.detected_protocol = ELM_PROTOCOL_AUTO;
@@ -264,7 +194,7 @@ Result_t Elm327_SendCommand(Elm327_t* elm, const char* command)
     elm->tx_buffer[cmd_len] = '\0';
     elm->tx_length = cmd_len;
     
-    rx_buffer_init(&elm->rx_buffer);
+    RingBuffer_Reset(&elm->rx_ring);
     
     Result_t result = elm->write_callback(elm->tx_buffer, cmd_len, elm->callback_context);
     
@@ -317,7 +247,7 @@ Result_t Elm327_SendRawData(Elm327_t* elm, const u8* data, u16 length)
     elm->tx_buffer[length] = '\r';
     elm->tx_length = length + 1U;
     
-    rx_buffer_init(&elm->rx_buffer);
+    RingBuffer_Reset(&elm->rx_ring);
     
     Result_t result = elm->write_callback(elm->tx_buffer, elm->tx_length, elm->callback_context);
     
@@ -355,7 +285,7 @@ Result_t Elm327_ProcessRx(Elm327_t* elm)
     }
     
     for (u16 i = 0U; i < bytes_read; i++) {
-        if (rx_buffer_push(&elm->rx_buffer, temp_buffer[i]) == false) {
+        if (RingBuffer_Push(&elm->rx_ring, temp_buffer[i]) != RESULT_OK) {
             if (elm->error_handler != NULL_PTR) {
                 ERROR_REPORT(elm->error_handler, ERR_COMM_BUFFER_OVERFLOW, ERR_SEV_WARNING);
             }
@@ -363,7 +293,7 @@ Result_t Elm327_ProcessRx(Elm327_t* elm)
         }
     }
     
-    if (rx_buffer_contains_prompt(&elm->rx_buffer) == true) {
+    if (rx_ring_contains_prompt(&elm->rx_ring) == true) {
         elm->state = ELM_STATE_IDLE;
     }
     
@@ -392,7 +322,7 @@ Result_t Elm327_GetResponse(Elm327_t* elm, u8* buffer, u16 max_length, u16* actu
     u16 idx = 0U;
     u8 byte;
     
-    while ((idx < max_length) && (rx_buffer_pop(&elm->rx_buffer, &byte) == true)) {
+    while ((idx < max_length) && (RingBuffer_Pop(&elm->rx_ring, &byte) == RESULT_OK)) {
         if ((byte != '>') && (byte != '\r') && (byte != '\n')) {
             buffer[idx] = byte;
             idx++;
