@@ -1,4 +1,5 @@
 #include "dtc_manager.h"
+#include "../str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const type_strings[] = {
@@ -17,16 +18,6 @@ static const char* const system_strings[] = {
 
 static const char system_chars[] = {'P', 'C', 'B', 'U'};
 
-static char nibble_to_hex(u8 nibble)
-{
-    if (nibble < 10U) {
-        return (char)('0' + nibble);
-    }
-    if (nibble < 16U) {
-        return (char)('A' + (nibble - 10U));
-    }
-    return '0';
-}
 
 Result_t DtcManager_CodeToString(u16 raw_code, char* buffer, u8 buffer_len)
 {
@@ -50,9 +41,9 @@ Result_t DtcManager_CodeToString(u16 raw_code, char* buffer, u8 buffer_len)
     }
     
     buffer[1] = (char)('0' + sub_system);
-    buffer[2] = nibble_to_hex(fault_high);
-    buffer[3] = nibble_to_hex((fault_low >> 4U) & 0x0FU);
-    buffer[4] = nibble_to_hex(fault_low & 0x0FU);
+    buffer[2] = nibble_to_hex_char(fault_high);
+    buffer[3] = nibble_to_hex_char((fault_low >> 4U) & 0x0FU);
+    buffer[4] = nibble_to_hex_char(fault_low & 0x0FU);
     buffer[5] = '\0';
     
     return RESULT_OK;
