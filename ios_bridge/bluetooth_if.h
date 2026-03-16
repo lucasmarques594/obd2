@@ -2,6 +2,7 @@
 #define BLUETOOTH_IF_H
 
 #include "../core/types.h"
+#include "../core/ring_buffer/ring_buffer.h"
 #include "../core/error/error_handler.h"
 
 #define BT_RX_BUFFER_SIZE 512
@@ -40,13 +41,6 @@ typedef struct {
     bool valid;
 } BluetoothDevice_t;
 
-typedef struct {
-    u8 buffer[BT_RX_BUFFER_SIZE];
-    u16 head;
-    u16 tail;
-    u16 count;
-} BluetoothRxBuffer_t;
-
 typedef void (*BluetoothEventCallback_t)(BluetoothEvent_t event, const void* data, void* context);
 
 typedef struct {
@@ -58,7 +52,8 @@ typedef struct {
 typedef struct {
     BluetoothState_t state;
     BluetoothDevice_t connected_device;
-    BluetoothRxBuffer_t rx_buffer;
+    RingBuffer_t rx_ring;
+    u8 rx_storage[BT_RX_BUFFER_SIZE];
     u8 tx_buffer[BT_TX_BUFFER_SIZE];
     u16 tx_pending;
     bool initialized;
