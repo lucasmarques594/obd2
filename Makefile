@@ -7,6 +7,8 @@ SRC_DIR = .
 BUILD_DIR = build
 
 CORE_SRCS = \
+	core/ring_buffer/ring_buffer.c \
+	core/str_utils/str_utils.c \
 	core/error/error_handler.c \
 	core/logger/logger.c \
 	core/state_machine/state_machine.c \
@@ -29,11 +31,13 @@ OBJS = $(ALL_SRCS:%.c=$(BUILD_DIR)/%.o)
 
 LIB_NAME = libobd2_core.a
 
-.PHONY: all clean dirs
+.PHONY: all clean dirs check info
 
 all: dirs $(BUILD_DIR)/$(LIB_NAME)
 
 dirs:
+	@mkdir -p $(BUILD_DIR)/core/ring_buffer
+	@mkdir -p $(BUILD_DIR)/core/str_utils
 	@mkdir -p $(BUILD_DIR)/core/error
 	@mkdir -p $(BUILD_DIR)/core/logger
 	@mkdir -p $(BUILD_DIR)/core/state_machine
