@@ -344,7 +344,7 @@ int main(int argc, char* argv[])
             case 5: {
                 char cmd[64];
                 printf("Digite o comando: ");
-                scanf("%s", cmd);
+                scanf("%63s", cmd);
                 send_command(cmd);
                 break;
             }

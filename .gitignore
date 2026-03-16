@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.d
+
+# Binaries
+obd2_scanner
+obd2_scanner_*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test binaries
+test/bin/
+test_runner

@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "../str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const level_strings[] = {
@@ -20,24 +21,6 @@ static const char* const category_strings[] = {
     [LOG_CAT_SCHEDULER] = "SCHEDULER"
 };
 
-static void copy_string_safe(char* dest, const char* src, size_t max_len)
-{
-    if ((dest == NULL_PTR) || (max_len == 0U)) {
-        return;
-    }
-    
-    if (src == NULL_PTR) {
-        dest[0] = '\0';
-        return;
-    }
-    
-    size_t i = 0U;
-    while ((i < (max_len - 1U)) && (src[i] != '\0')) {
-        dest[i] = src[i];
-        i++;
-    }
-    dest[i] = '\0';
-}
 
 Result_t Logger_Init(Logger_t* logger, const LoggerConfig_t* config)
 {
@@ -106,8 +89,8 @@ Result_t Logger_Log(Logger_t* logger,
     entry->error_code = error_code;
     entry->valid = true;
     
-    copy_string_safe(entry->command, command, LOG_ENTRY_CMD_SIZE);
-    copy_string_safe(entry->response, response, LOG_ENTRY_RESP_SIZE);
+    str_copy_safe(entry->command, command, LOG_ENTRY_CMD_SIZE);
+    str_copy_safe(entry->response, response, LOG_ENTRY_RESP_SIZE);
     
     logger->head = (logger->head + 1U) % LOG_BUFFER_SIZE;
     

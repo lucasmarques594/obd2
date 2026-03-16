@@ -1,4 +1,5 @@
 #include "bluetooth_if.h"
+#include "../core/str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const state_strings[] = {
@@ -22,57 +23,6 @@ static const char* const event_strings[] = {
     [BT_EVENT_ERROR] = "Error"
 };
 
-static void rx_buffer_init(BluetoothRxBuffer_t* buf)
-{
-    buf->head = 0U;
-    buf->tail = 0U;
-    buf->count = 0U;
-}
-
-static bool rx_buffer_push(BluetoothRxBuffer_t* buf, u8 byte)
-{
-    if (buf->count >= BT_RX_BUFFER_SIZE) {
-        return false;
-    }
-    
-    buf->buffer[buf->head] = byte;
-    buf->head = (buf->head + 1U) % BT_RX_BUFFER_SIZE;
-    buf->count++;
-    
-    return true;
-}
-
-static bool rx_buffer_pop(BluetoothRxBuffer_t* buf, u8* byte)
-{
-    if (buf->count == 0U) {
-        return false;
-    }
-    
-    *byte = buf->buffer[buf->tail];
-    buf->tail = (buf->tail + 1U) % BT_RX_BUFFER_SIZE;
-    buf->count--;
-    
-    return true;
-}
-
-static void copy_string_safe(char* dest, const char* src, size_t max_len)
-{
-    if ((dest == NULL_PTR) || (max_len == 0U)) {
-        return;
-    }
-    
-    if (src == NULL_PTR) {
-        dest[0] = '\0';
-        return;
-    }
-    
-    size_t i = 0U;
-    while ((i < (max_len - 1U)) && (src[i] != '\0')) {
-        dest[i] = src[i];
-        i++;
-    }
-    dest[i] = '\0';
-}
 
 Result_t Bluetooth_Init(BluetoothInterface_t* bt, const BluetoothConfig_t* config)
 {
@@ -91,7 +41,7 @@ Result_t Bluetooth_Init(BluetoothInterface_t* bt, const BluetoothConfig_t* confi
     bt->tx_pending = 0U;
     bt->platform_handle = NULL_PTR;
     
-    rx_buffer_init(&bt->rx_buffer);
+    RingBuffer_Init(&bt->rx_ring, bt->rx_storage, BT_RX_BUFFER_SIZE);
     
     bt->event_callback = config->event_callback;
     bt->callback_context = config->callback_context;
@@ -178,8 +128,8 @@ Result_t Bluetooth_Connect(BluetoothInterface_t* bt, const BluetoothDevice_t* de
     
     bt->state = BT_STATE_CONNECTING;
     
-    copy_string_safe(bt->connected_device.name, device->name, BT_DEVICE_NAME_MAX);
-    copy_string_safe(bt->connected_device.uuid, device->uuid, BT_UUID_STRING_MAX);
+    str_copy_safe(bt->connected_device.name, device->name, BT_DEVICE_NAME_MAX);
+    str_copy_safe(bt->connected_device.uuid, device->uuid, BT_UUID_STRING_MAX);
     bt->connected_device.rssi = device->rssi;
     bt->connected_device.is_elm327 = device->is_elm327;
     
@@ -199,7 +149,7 @@ Result_t Bluetooth_Disconnect(BluetoothInterface_t* bt)
     bt->state = BT_STATE_DISCONNECTED;
     bt->connected_device.valid = false;
     
-    rx_buffer_init(&bt->rx_buffer);
+    RingBuffer_Reset(&bt->rx_ring);
     
     if (bt->event_callback != NULL_PTR) {
         bt->event_callback(BT_EVENT_DISCONNECTED, NULL_PTR, bt->callback_context);
@@ -260,7 +210,7 @@ Result_t Bluetooth_Read(BluetoothInterface_t* bt, u8* buffer, u16 max_length, u1
     u16 idx = 0U;
     u8 byte;
     
-    while ((idx < max_length) && (rx_buffer_pop(&bt->rx_buffer, &byte) == true)) {
+    while ((idx < max_length) && (RingBuffer_Pop(&bt->rx_ring, &byte) == RESULT_OK)) {
         buffer[idx] = byte;
         idx++;
     }
@@ -280,7 +230,7 @@ u16 Bluetooth_GetAvailableBytes(const BluetoothInterface_t* bt)
         return 0U;
     }
     
-    return bt->rx_buffer.count;
+    return RingBuffer_GetCount(&bt->rx_ring);
 }
 
 BluetoothState_t Bluetooth_GetState(const BluetoothInterface_t* bt)
@@ -348,7 +298,7 @@ Result_t Bluetooth_OnDataReceived(BluetoothInterface_t* bt, const u8* data, u16 
     }
     
     for (u16 i = 0U; i < length; i++) {
-        if (rx_buffer_push(&bt->rx_buffer, data[i]) == false) {
+        if (RingBuffer_Push(&bt->rx_ring, data[i]) != RESULT_OK) {
             if (bt->error_handler != NULL_PTR) {
                 ERROR_REPORT(bt->error_handler, ERR_COMM_BUFFER_OVERFLOW, ERR_SEV_WARNING);
             }
@@ -388,7 +338,7 @@ Result_t Bluetooth_OnStateChanged(BluetoothInterface_t* bt, BluetoothState_t new
         }
     } else if ((old_state == BT_STATE_CONNECTED) && (new_state != BT_STATE_CONNECTED)) {
         bt->connected_device.valid = false;
-        rx_buffer_init(&bt->rx_buffer);
+        RingBuffer_Reset(&bt->rx_ring);
         
         if (bt->event_callback != NULL_PTR) {
             bt->event_callback(BT_EVENT_DISCONNECTED, NULL_PTR, bt->callback_context);

@@ -1,4 +1,5 @@
 #include "obd2.h"
+#include "../str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const mode_strings[] = {
@@ -14,30 +15,6 @@ static const char* const mode_strings[] = {
     [OBD2_MODE_0A_PERMANENT_DTCS] = "Permanent DTCs"
 };
 
-static u8 hex_char_to_nibble(char c)
-{
-    if ((c >= '0') && (c <= '9')) {
-        return (u8)(c - '0');
-    }
-    if ((c >= 'A') && (c <= 'F')) {
-        return (u8)(c - 'A' + 10);
-    }
-    if ((c >= 'a') && (c <= 'f')) {
-        return (u8)(c - 'a' + 10);
-    }
-    return 0xFFU;
-}
-
-static char nibble_to_hex_char(u8 nibble)
-{
-    if (nibble < 10U) {
-        return (char)('0' + nibble);
-    }
-    if (nibble < 16U) {
-        return (char)('A' + (nibble - 10U));
-    }
-    return '0';
-}
 
 static u16 build_obd_command(u8 mode, u8 pid, bool include_pid, char* buffer, u16 max_len)
 {

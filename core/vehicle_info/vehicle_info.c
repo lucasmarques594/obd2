@@ -1,4 +1,5 @@
 #include "vehicle_info.h"
+#include "../str_utils/str_utils.h"
 #include <string.h>
 
 static const char* const type_strings[] = {
@@ -13,29 +14,6 @@ static const char* const type_strings[] = {
     [VEHICLE_INFO_ECU_NAME] = "ECU Name"
 };
 
-static void copy_string_safe(char* dest, const char* src, size_t max_len)
-{
-    if ((dest == NULL_PTR) || (max_len == 0U)) {
-        return;
-    }
-    
-    if (src == NULL_PTR) {
-        dest[0] = '\0';
-        return;
-    }
-    
-    size_t i = 0U;
-    while ((i < (max_len - 1U)) && (src[i] != '\0')) {
-        dest[i] = src[i];
-        i++;
-    }
-    dest[i] = '\0';
-}
-
-static bool is_printable(u8 c)
-{
-    return ((c >= 0x20U) && (c <= 0x7EU));
-}
 
 Result_t VehicleInfoManager_Init(VehicleInfoManager_t* vim, const VehicleInfoManagerConfig_t* config)
 {
@@ -105,7 +83,7 @@ Result_t VehicleInfoManager_ProcessResponse(VehicleInfoManager_t* vim,
             u8 vin_idx = 0U;
             
             for (u16 i = start_idx; (i < length) && (vin_idx < VIN_LENGTH); i++) {
-                if (is_printable(data[i]) == true) {
+                if (is_printable_ascii(data[i]) == true) {
                     vim->info.vin[vin_idx] = (char)data[i];
                     vin_idx++;
                 }
@@ -125,7 +103,7 @@ Result_t VehicleInfoManager_ProcessResponse(VehicleInfoManager_t* vim,
                 u8 char_idx = 0U;
                 
                 for (u16 i = 0U; (i < length) && (char_idx < CALIBRATION_ID_LENGTH); i++) {
-                    if (is_printable(data[i]) == true) {
+                    if (is_printable_ascii(data[i]) == true) {
                         vim->info.calibration_id[idx][char_idx] = (char)data[i];
                         char_idx++;
                     }
@@ -156,7 +134,7 @@ Result_t VehicleInfoManager_ProcessResponse(VehicleInfoManager_t* vim,
                 u8 char_idx = 0U;
                 
                 for (u16 i = 0U; (i < length) && (char_idx < ECU_NAME_LENGTH); i++) {
-                    if (is_printable(data[i]) == true) {
+                    if (is_printable_ascii(data[i]) == true) {
                         vim->info.ecu_name[idx][char_idx] = (char)data[i];
                         char_idx++;
                     }
@@ -223,7 +201,7 @@ Result_t VehicleInfoManager_GetVin(const VehicleInfoManager_t* vim, char* vin, u
         return RESULT_NO_DATA;
     }
     
-    copy_string_safe(vin, vim->info.vin, max_len);
+    str_copy_safe(vin, vim->info.vin, max_len);
     
     return RESULT_OK;
 }
