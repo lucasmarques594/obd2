@@ -21,7 +21,7 @@ typedef struct {
     u8 pid;
     float min_value;
     float max_value;
-    float max_rate_of_change;
+    float max_rate_per_sec;
     bool check_stuck;
     bool check_range;
     bool check_rate;
@@ -83,3 +83,4 @@ u32 SanityCheck_GetTotalChecks(const SanityCheck_t* sc);
 u32 SanityCheck_GetTotalFailures(const SanityCheck_t* sc);
 
 #endif
+
