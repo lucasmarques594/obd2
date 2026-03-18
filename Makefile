@@ -30,10 +30,27 @@ ALL_SRCS = $(CORE_SRCS) $(BRIDGE_SRCS)
 OBJS = $(ALL_SRCS:%.c=$(BUILD_DIR)/%.o)
 
 LIB_NAME = libobd2_core.a
+SCANNER_BIN = obd2_scanner
 
-.PHONY: all clean dirs check info
+UNITY_SRC = test/unity/unity.c
+
+TEST_SRCS = \
+	test/test_ring_buffer.c \
+	test/test_str_utils.c \
+	test/test_pid_manager.c \
+	test/test_dtc_manager.c \
+	test/test_state_machine.c \
+	test/test_sanity_check.c \
+	test/test_error_handler.c
+
+TEST_BINS = $(TEST_SRCS:test/%.c=$(BUILD_DIR)/test/%)
+
+.PHONY: all scanner clean dirs check info test
 
 all: dirs $(BUILD_DIR)/$(LIB_NAME)
+
+scanner: all
+	$(CC) $(CFLAGS) test_macos.c -L$(BUILD_DIR) -lobd2_core -lm -o $(SCANNER_BIN)
 
 dirs:
 	@mkdir -p $(BUILD_DIR)/core/ring_buffer
@@ -59,7 +76,28 @@ $(BUILD_DIR)/%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(SCANNER_BIN)
+
+test: all $(TEST_BINS)
+	@echo ""
+	@echo "=== Running tests ==="
+	@echo ""
+	@failed=0; \
+	for t in $(TEST_BINS); do \
+		echo "--- $$t ---"; \
+		./$$t || failed=1; \
+		echo ""; \
+	done; \
+	if [ $$failed -eq 0 ]; then \
+		echo "=== ALL TESTS PASSED ==="; \
+	else \
+		echo "=== SOME TESTS FAILED ==="; \
+		exit 1; \
+	fi
+
+$(BUILD_DIR)/test/%: test/%.c $(BUILD_DIR)/$(LIB_NAME)
+	@mkdir -p $(BUILD_DIR)/test
+	$(CC) $(CFLAGS) -Wno-unused-function -Itest $< $(UNITY_SRC) -L$(BUILD_DIR) -lobd2_core -lm -o $@
 
 check: $(ALL_SRCS)
 	@echo "Checking syntax..."
@@ -73,3 +111,4 @@ info:
 	@echo ""
 	@echo "Object files:"
 	@for obj in $(OBJS); do echo "  $$obj"; done
+
