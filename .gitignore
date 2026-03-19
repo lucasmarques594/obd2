@@ -19,3 +19,5 @@ obd2_scanner_*
 # Test binaries
 test/bin/
 test_runner
+
+groq-api.env
