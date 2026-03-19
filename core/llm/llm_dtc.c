@@ -440,4 +440,4 @@ const char* LlmDtc_GetProviderString(LlmProvider_t provider)
     }
 
     return provider_strings[provider];
-}
+}   
