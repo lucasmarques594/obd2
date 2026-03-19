@@ -17,6 +17,11 @@
 #include "core/obd2/obd2.h"
 #include "core/pid/pid_manager.h"
 #include "core/dtc/dtc_manager.h"
+#include "core/llm/llm_dtc.h"
+
+/* ---------------------------------------------------------------------------
+ * Serial transport layer
+ * ---------------------------------------------------------------------------*/
 
 static int serial_fd = -1;
 
@@ -84,6 +89,9 @@ static void serial_close(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Elm327 callbacks — bridge between core lib and POSIX serial
+ * ---------------------------------------------------------------------------*/
 
 static Result_t elm_write_cb(const u8* data, u16 length, void* context)
 {
@@ -120,12 +128,20 @@ static Result_t elm_read_cb(u8* data, u16 max_length, u16* actual_length, void* 
     return RESULT_OK;
 }
 
+/* ---------------------------------------------------------------------------
+ * Timestamp provider
+ * ---------------------------------------------------------------------------*/
+
 static u32 get_timestamp_ms(void)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (u32)((tv.tv_sec * 1000U) + (tv.tv_usec / 1000U));
 }
+
+/* ---------------------------------------------------------------------------
+ * Error callback
+ * ---------------------------------------------------------------------------*/
 
 static void error_callback(const ErrorInfo_t* error)
 {
@@ -136,13 +152,25 @@ static void error_callback(const ErrorInfo_t* error)
            error->line);
 }
 
+/* ---------------------------------------------------------------------------
+ * Core instances
+ * ---------------------------------------------------------------------------*/
+
 static ErrorHandler_t g_error_handler;
 static Logger_t g_logger;
 static Elm327_t g_elm;
 static Obd2_t g_obd;
 static PidManager_t g_pid_mgr;
 static DtcManager_t g_dtc_mgr;
+static LlmDtcInterpreter_t g_llm;
+static bool g_llm_available = false;
 
+/* ---------------------------------------------------------------------------
+ * Blocking send/receive helper
+ *
+ * Sends a command through the ELM327 core, polls for the response until
+ * the prompt '>' arrives or timeout is reached, and returns the raw response.
+ * ---------------------------------------------------------------------------*/
 
 static u8 g_resp_buffer[256];
 static u16 g_resp_length;
@@ -175,6 +203,9 @@ static Result_t send_and_wait(const char* cmd, int timeout_ms)
     return Elm327_GetResponse(&g_elm, g_resp_buffer, sizeof(g_resp_buffer) - 1U, &g_resp_length);
 }
 
+/* ---------------------------------------------------------------------------
+ * Init sequence — uses the core Elm327 driver
+ * ---------------------------------------------------------------------------*/
 
 static void init_elm327_sequence(void)
 {
@@ -202,6 +233,9 @@ static void init_elm327_sequence(void)
     printf("\n=== ELM327 Inicializado ===\n\n");
 }
 
+/* ---------------------------------------------------------------------------
+ * Read live data — uses PidManager for conversion
+ * ---------------------------------------------------------------------------*/
 
 static const u8 live_pids[] = { 0x0CU, 0x0DU, 0x05U, 0x04U, 0x11U };
 static const char* live_cmds[] = { "010C", "010D", "0105", "0104", "0111" };
@@ -249,6 +283,9 @@ static void read_live_data(void)
     printf("\n");
 }
 
+/* ---------------------------------------------------------------------------
+ * Read DTCs — uses DtcManager for parsing
+ * ---------------------------------------------------------------------------*/
 
 static void read_dtcs(void)
 {
@@ -302,6 +339,9 @@ static void read_dtcs(void)
     printf("\n");
 }
 
+/* ---------------------------------------------------------------------------
+ * Clear DTCs
+ * ---------------------------------------------------------------------------*/
 
 static void clear_dtcs(void)
 {
@@ -317,6 +357,9 @@ static void clear_dtcs(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Read VIN
+ * ---------------------------------------------------------------------------*/
 
 static void read_vin(void)
 {
@@ -338,6 +381,10 @@ static void read_vin(void)
     printf("  Resposta: %.*s\n\n", (int)g_resp_length, (const char*)g_resp_buffer);
 }
 
+/* ---------------------------------------------------------------------------
+ * Manual command
+ * ---------------------------------------------------------------------------*/
+
 static void manual_command(void)
 {
     char cmd[64];
@@ -356,6 +403,52 @@ static void manual_command(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Interpret DTCs with LLM
+ * ---------------------------------------------------------------------------*/
+
+static void interpret_dtcs_llm(void)
+{
+    if (g_llm_available == false) {
+        printf("\n  LLM nao configurado. Defina GROQ_API_KEY no ambiente.\n\n");
+        return;
+    }
+
+    u8 count = DtcManager_GetCount(&g_dtc_mgr, DTC_TYPE_CURRENT);
+
+    if (count == 0U) {
+        printf("\n  Nenhum DTC em memoria. Leia os DTCs primeiro (opcao 2).\n\n");
+        return;
+    }
+
+    printf("\n=== Interpretacao LLM (%s) ===\n\n", g_llm.config.model);
+    printf("  Consultando %u DTC(s) via Groq...\n\n", count);
+
+    LlmResponse_t response;
+    Result_t r = LlmDtc_InterpretFromManager(&g_llm, &g_dtc_mgr, DTC_TYPE_CURRENT, &response);
+
+    if (r != RESULT_OK || response.success == false) {
+        printf("  Falha na consulta ao LLM.\n\n");
+        return;
+    }
+
+    for (u8 i = 0U; i < response.count; i++) {
+        LlmDtcResult_t* res = &response.results[i];
+        if (res->valid == false) {
+            continue;
+        }
+
+        printf("  --- %s ---\n", res->code);
+        printf("  Descricao:  %s\n", res->description);
+        printf("  Causas:     %s\n", res->causes);
+        printf("  Severidade: %s\n", res->severity);
+        printf("\n");
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Menu
+ * ---------------------------------------------------------------------------*/
 
 static void print_menu(void)
 {
@@ -370,11 +463,15 @@ static void print_menu(void)
     printf("  4. Ler VIN\n");
     printf("  5. Enviar comando manual\n");
     printf("  6. Re-inicializar ELM327\n");
+    printf("  7. Interpretar DTCs com IA%s\n", g_llm_available ? "" : " [indisponivel]");
     printf("  0. Sair\n");
     printf("\n");
     printf("Escolha: ");
 }
 
+/* ---------------------------------------------------------------------------
+ * Main
+ * ---------------------------------------------------------------------------*/
 
 int main(int argc, char* argv[])
 {
@@ -444,6 +541,17 @@ int main(int argc, char* argv[])
     };
     DtcManager_Init(&g_dtc_mgr, &dtc_cfg);
 
+    const char* groq_key = getenv("GROQ_API_KEY");
+    if (groq_key != NULL && groq_key[0] != '\0') {
+        if (LlmDtc_InitGroq(&g_llm, groq_key) == RESULT_OK) {
+            g_llm_available = true;
+            printf("LLM configurado: Groq (%s)\n", g_llm.config.model);
+        }
+    } else {
+        printf("GROQ_API_KEY nao definida — interpretacao IA indisponivel.\n");
+        printf("  export GROQ_API_KEY=gsk_...\n");
+    }
+
     init_elm327_sequence();
 
     int running = 1;
@@ -477,6 +585,9 @@ int main(int argc, char* argv[])
                 break;
             case 6:
                 init_elm327_sequence();
+                break;
+            case 7:
+                interpret_dtcs_llm();
                 break;
             default:
                 printf("Opcao invalida.\n");
