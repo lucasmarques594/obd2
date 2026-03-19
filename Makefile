@@ -3,6 +3,10 @@ CFLAGS = -Wall -Wextra -Werror -std=c99 -pedantic -O2
 CFLAGS += -Wno-unused-parameter
 CFLAGS += -I.
 
+CFLAGS_LLM = -Wall -Wextra -Werror -std=c99 -O2
+CFLAGS_LLM += -Wno-unused-parameter
+CFLAGS_LLM += -I.
+
 SRC_DIR = .
 BUILD_DIR = build
 
@@ -41,7 +45,8 @@ TEST_SRCS = \
 	test/test_dtc_manager.c \
 	test/test_state_machine.c \
 	test/test_sanity_check.c \
-	test/test_error_handler.c
+	test/test_error_handler.c \
+	test/test_llm_dtc.c
 
 TEST_BINS = $(TEST_SRCS:test/%.c=$(BUILD_DIR)/test/%)
 
@@ -50,7 +55,7 @@ TEST_BINS = $(TEST_SRCS:test/%.c=$(BUILD_DIR)/test/%)
 all: dirs $(BUILD_DIR)/$(LIB_NAME)
 
 scanner: all
-	$(CC) $(CFLAGS) test_macos.c -L$(BUILD_DIR) -lobd2_core -lm -o $(SCANNER_BIN)
+	$(CC) $(CFLAGS_LLM) test_macos.c core/llm/llm_dtc.c -L$(BUILD_DIR) -lobd2_core -lcurl -lm -o $(SCANNER_BIN)
 
 dirs:
 	@mkdir -p $(BUILD_DIR)/core/ring_buffer
@@ -95,6 +100,10 @@ test: all $(TEST_BINS)
 		exit 1; \
 	fi
 
+$(BUILD_DIR)/test/test_llm_dtc: test/test_llm_dtc.c core/llm/llm_dtc.c $(BUILD_DIR)/$(LIB_NAME)
+	@mkdir -p $(BUILD_DIR)/test
+	$(CC) $(CFLAGS_LLM) -Wno-unused-function -Itest test/test_llm_dtc.c core/llm/llm_dtc.c $(UNITY_SRC) -L$(BUILD_DIR) -lobd2_core -lcurl -lm -o $@
+
 $(BUILD_DIR)/test/%: test/%.c $(BUILD_DIR)/$(LIB_NAME)
 	@mkdir -p $(BUILD_DIR)/test
 	$(CC) $(CFLAGS) -Wno-unused-function -Itest $< $(UNITY_SRC) -L$(BUILD_DIR) -lobd2_core -lm -o $@
@@ -111,4 +120,3 @@ info:
 	@echo ""
 	@echo "Object files:"
 	@for obj in $(OBJS); do echo "  $$obj"; done
-
