@@ -89,6 +89,94 @@ static void serial_close(void)
     }
 }
 
+static int serial_set_baudrate(int baudrate)
+{
+    if (serial_fd < 0) {
+        return -1;
+    }
+
+    struct termios tty;
+    if (tcgetattr(serial_fd, &tty) != 0) {
+        return -1;
+    }
+
+    speed_t baud;
+    switch (baudrate) {
+        case 9600:   baud = B9600;   break;
+        case 38400:  baud = B38400;  break;
+        case 115200: baud = B115200; break;
+        default:     baud = B38400;  break;
+    }
+
+    cfsetospeed(&tty, baud);
+    cfsetispeed(&tty, baud);
+
+    if (tcsetattr(serial_fd, TCSANOW, &tty) != 0) {
+        return -1;
+    }
+
+    tcflush(serial_fd, TCIOFLUSH);
+    return 0;
+}
+
+static int serial_try_atz(int timeout_ms)
+{
+    if (serial_fd < 0) {
+        return -1;
+    }
+
+    tcflush(serial_fd, TCIOFLUSH);
+    usleep(50000);
+
+    const char* cmd = "ATZ\r";
+    ssize_t wr = write(serial_fd, cmd, 4);
+    (void)wr;
+
+    char buf[128];
+    int total = 0;
+    int elapsed = 0;
+
+    while (elapsed < timeout_ms && total < 127) {
+        ssize_t n = read(serial_fd, buf + total, (size_t)(127 - total));
+        if (n > 0) {
+            total += (int)n;
+            buf[total] = '\0';
+            if (strchr(buf, '>') != NULL) {
+                return 1;
+            }
+        }
+        usleep(10000);
+        elapsed += 10;
+    }
+
+    return 0;
+}
+
+static int serial_auto_detect_baudrate(void)
+{
+    static const int rates[] = { 38400, 115200, 9600 };
+    static const int num_rates = 3;
+
+    for (int i = 0; i < num_rates; i++) {
+        printf("  Tentando %d baud... ", rates[i]);
+        fflush(stdout);
+
+        if (serial_set_baudrate(rates[i]) < 0) {
+            printf("falhou\n");
+            continue;
+        }
+
+        if (serial_try_atz(3000) == 1) {
+            printf("OK! ELM327 respondeu.\n");
+            return rates[i];
+        }
+
+        printf("sem resposta\n");
+    }
+
+    return -1;
+}
+
 /* ---------------------------------------------------------------------------
  * Elm327 callbacks — bridge between core lib and POSIX serial
  * ---------------------------------------------------------------------------*/
@@ -487,15 +575,39 @@ int main(int argc, char* argv[])
     printf("  Porta: %s\n", port);
     printf("=========================================\n");
     printf("\n");
-    printf("Uso: %s [porta_serial]\n", argv[0]);
+    printf("Uso: %s [porta_serial] [baudrate]\n", argv[0]);
     printf("Exemplo: %s /dev/tty.OBDLinkMX\n", argv[0]);
-    printf("         %s /dev/tty.OBDII-SPP\n", argv[0]);
+    printf("         %s /dev/tty.OBDII 9600\n", argv[0]);
     printf("\n");
 
-    if (serial_open(port, 38400) < 0) {
+    int baudrate = 0;
+    if (argc > 2) {
+        baudrate = atoi(argv[2]);
+    }
+
+    if (serial_open(port, baudrate > 0 ? baudrate : 38400) < 0) {
         printf("\nDica: Liste portas disponiveis com:\n");
         printf("  ls /dev/tty.*\n\n");
         return 1;
+    }
+
+    if (baudrate <= 0) {
+        printf("\n=== Auto-detectando baudrate ===\n\n");
+        baudrate = serial_auto_detect_baudrate();
+
+        if (baudrate < 0) {
+            printf("\n  Nenhum baudrate funcionou.\n");
+            printf("  Verifique:\n");
+            printf("    - Adaptador pareado via Bluetooth\n");
+            printf("    - Ignição do carro na posição ON\n");
+            printf("    - Adaptador plugado na porta OBD2\n\n");
+            serial_close();
+            return 1;
+        }
+
+        printf("\n  Baudrate detectado: %d\n\n", baudrate);
+    } else {
+        printf("Baudrate: %d\n", baudrate);
     }
 
     ErrorHandler_Init(&g_error_handler, error_callback);
