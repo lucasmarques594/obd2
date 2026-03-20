@@ -57,6 +57,14 @@ all: dirs $(BUILD_DIR)/$(LIB_NAME)
 scanner: all
 	$(CC) $(CFLAGS_LLM) test_macos.c core/llm/llm_dtc.c -L$(BUILD_DIR) -lobd2_core -lcurl -lm -o $(SCANNER_BIN)
 
+scanner-ble: all
+	clang -std=c99 -Wall -Wextra -O2 -Wno-unused-parameter -I. \
+		-fobjc-arc \
+		test_macos_ble.m ble_bridge/ble_elm327.m core/llm/llm_dtc.c \
+		-L$(BUILD_DIR) -lobd2_core \
+		-framework Foundation -framework CoreBluetooth -lcurl -lm \
+		-o obd2_scanner_ble
+
 dirs:
 	@mkdir -p $(BUILD_DIR)/core/ring_buffer
 	@mkdir -p $(BUILD_DIR)/core/str_utils
@@ -81,7 +89,7 @@ $(BUILD_DIR)/%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(SCANNER_BIN)
+	rm -rf $(BUILD_DIR) $(SCANNER_BIN) obd2_scanner_ble
 
 test: all $(TEST_BINS)
 	@echo ""

@@ -4,10 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <termios.h>
-#include <errno.h>
 #include <sys/time.h>
 
 #include "core/types.h"
@@ -18,206 +15,10 @@
 #include "core/pid/pid_manager.h"
 #include "core/dtc/dtc_manager.h"
 #include "core/llm/llm_dtc.h"
+#include "ble_bridge/ble_elm327.h"
 
 /* ---------------------------------------------------------------------------
- * Serial transport layer
- * ---------------------------------------------------------------------------*/
-
-static int serial_fd = -1;
-
-static int serial_open(const char* port, int baudrate)
-{
-    serial_fd = open(port, O_RDWR | O_NOCTTY | O_NONBLOCK);
-
-    if (serial_fd < 0) {
-        printf("ERRO: Nao conseguiu abrir %s: %s\n", port, strerror(errno));
-        return -1;
-    }
-
-    struct termios tty;
-    memset(&tty, 0, sizeof(tty));
-
-    if (tcgetattr(serial_fd, &tty) != 0) {
-        printf("ERRO: tcgetattr falhou\n");
-        return -1;
-    }
-
-    speed_t baud;
-    switch (baudrate) {
-        case 9600:   baud = B9600;   break;
-        case 38400:  baud = B38400;  break;
-        case 115200: baud = B115200; break;
-        default:     baud = B38400;  break;
-    }
-
-    cfsetospeed(&tty, baud);
-    cfsetispeed(&tty, baud);
-
-    tty.c_cflag |= (CLOCAL | CREAD);
-    tty.c_cflag &= (tcflag_t)~PARENB;
-    tty.c_cflag &= (tcflag_t)~CSTOPB;
-    tty.c_cflag &= (tcflag_t)~CSIZE;
-    tty.c_cflag |= CS8;
-#ifdef CRTSCTS
-    tty.c_cflag &= (tcflag_t)~CRTSCTS;
-#endif
-
-    tty.c_lflag &= (tcflag_t)~(ICANON | ECHO | ECHOE | ISIG);
-    tty.c_iflag &= (tcflag_t)~(IXON | IXOFF | IXANY);
-    tty.c_iflag &= (tcflag_t)~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
-    tty.c_oflag &= (tcflag_t)~OPOST;
-
-    tty.c_cc[VMIN] = 0;
-    tty.c_cc[VTIME] = 10;
-
-    if (tcsetattr(serial_fd, TCSANOW, &tty) != 0) {
-        printf("ERRO: tcsetattr falhou\n");
-        return -1;
-    }
-
-    tcflush(serial_fd, TCIOFLUSH);
-
-    printf("Porta serial %s aberta com sucesso!\n", port);
-    return 0;
-}
-
-static void serial_close(void)
-{
-    if (serial_fd >= 0) {
-        close(serial_fd);
-        serial_fd = -1;
-    }
-}
-
-static int serial_set_baudrate(int baudrate)
-{
-    if (serial_fd < 0) {
-        return -1;
-    }
-
-    struct termios tty;
-    if (tcgetattr(serial_fd, &tty) != 0) {
-        return -1;
-    }
-
-    speed_t baud;
-    switch (baudrate) {
-        case 9600:   baud = B9600;   break;
-        case 38400:  baud = B38400;  break;
-        case 115200: baud = B115200; break;
-        default:     baud = B38400;  break;
-    }
-
-    cfsetospeed(&tty, baud);
-    cfsetispeed(&tty, baud);
-
-    if (tcsetattr(serial_fd, TCSANOW, &tty) != 0) {
-        return -1;
-    }
-
-    tcflush(serial_fd, TCIOFLUSH);
-    return 0;
-}
-
-static int serial_try_atz(int timeout_ms)
-{
-    if (serial_fd < 0) {
-        return -1;
-    }
-
-    tcflush(serial_fd, TCIOFLUSH);
-    usleep(50000);
-
-    const char* cmd = "ATZ\r";
-    ssize_t wr = write(serial_fd, cmd, 4);
-    (void)wr;
-
-    char buf[128];
-    int total = 0;
-    int elapsed = 0;
-
-    while (elapsed < timeout_ms && total < 127) {
-        ssize_t n = read(serial_fd, buf + total, (size_t)(127 - total));
-        if (n > 0) {
-            total += (int)n;
-            buf[total] = '\0';
-            if (strchr(buf, '>') != NULL) {
-                return 1;
-            }
-        }
-        usleep(10000);
-        elapsed += 10;
-    }
-
-    return 0;
-}
-
-static int serial_auto_detect_baudrate(void)
-{
-    static const int rates[] = { 38400, 115200, 9600 };
-    static const int num_rates = 3;
-
-    for (int i = 0; i < num_rates; i++) {
-        printf("  Tentando %d baud... ", rates[i]);
-        fflush(stdout);
-
-        if (serial_set_baudrate(rates[i]) < 0) {
-            printf("falhou\n");
-            continue;
-        }
-
-        if (serial_try_atz(3000) == 1) {
-            printf("OK! ELM327 respondeu.\n");
-            return rates[i];
-        }
-
-        printf("sem resposta\n");
-    }
-
-    return -1;
-}
-
-/* ---------------------------------------------------------------------------
- * Elm327 callbacks — bridge between core lib and POSIX serial
- * ---------------------------------------------------------------------------*/
-
-static Result_t elm_write_cb(const u8* data, u16 length, void* context)
-{
-    UNUSED(context);
-
-    if (serial_fd < 0) {
-        return RESULT_ERROR;
-    }
-
-    ssize_t written = write(serial_fd, data, length);
-
-    printf("TX: %.*s", (int)length, (const char*)data);
-
-    return (written == (ssize_t)length) ? RESULT_OK : RESULT_ERROR;
-}
-
-static Result_t elm_read_cb(u8* data, u16 max_length, u16* actual_length, void* context)
-{
-    UNUSED(context);
-
-    if (serial_fd < 0) {
-        *actual_length = 0U;
-        return RESULT_ERROR;
-    }
-
-    ssize_t n = read(serial_fd, data, max_length);
-
-    if (n < 0) {
-        *actual_length = 0U;
-        return (errno == EAGAIN || errno == EWOULDBLOCK) ? RESULT_OK : RESULT_ERROR;
-    }
-
-    *actual_length = (u16)n;
-    return RESULT_OK;
-}
-
-/* ---------------------------------------------------------------------------
- * Timestamp provider
+ * Timestamp
  * ---------------------------------------------------------------------------*/
 
 static u32 get_timestamp_ms(void)
@@ -252,47 +53,25 @@ static PidManager_t g_pid_mgr;
 static DtcManager_t g_dtc_mgr;
 static LlmDtcInterpreter_t g_llm;
 static bool g_llm_available = false;
+static BleElm327_t* g_ble = NULL;
 
 /* ---------------------------------------------------------------------------
- * Blocking send/receive helper
- *
- * Sends a command through the ELM327 core, polls for the response until
- * the prompt '>' arrives or timeout is reached, and returns the raw response.
+ * Blocking send/receive via BLE
  * ---------------------------------------------------------------------------*/
 
 static u8 g_resp_buffer[256];
 static u16 g_resp_length;
 
-static Result_t send_and_wait(const char* cmd, int timeout_ms)
+static Result_t send_and_wait(const char* cmd, u32 timeout_ms)
 {
-    Result_t result = Elm327_SendCommand(&g_elm, cmd);
-    if (result != RESULT_OK) {
-        return result;
-    }
-
-    int elapsed = 0;
-    while (elapsed < timeout_ms) {
-        Elm327_Update(&g_elm);
-
-        if (Elm327_GetState(&g_elm) == ELM_STATE_IDLE) {
-            break;
-        }
-
-        usleep(10000);
-        elapsed += 10;
-    }
-
-    if (Elm327_GetState(&g_elm) != ELM_STATE_IDLE) {
-        g_elm.state = ELM_STATE_IDLE;
-        return RESULT_TIMEOUT;
-    }
-
     g_resp_length = 0U;
-    return Elm327_GetResponse(&g_elm, g_resp_buffer, sizeof(g_resp_buffer) - 1U, &g_resp_length);
+    return BleElm327_SendCommand(g_ble, cmd,
+                                  (char*)g_resp_buffer, sizeof(g_resp_buffer) - 1U,
+                                  &g_resp_length, timeout_ms);
 }
 
 /* ---------------------------------------------------------------------------
- * Init sequence — uses the core Elm327 driver
+ * Init ELM327
  * ---------------------------------------------------------------------------*/
 
 static void init_elm327_sequence(void)
@@ -322,7 +101,7 @@ static void init_elm327_sequence(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Read live data — uses PidManager for conversion
+ * Read live data
  * ---------------------------------------------------------------------------*/
 
 static const u8 live_pids[] = { 0x0CU, 0x0DU, 0x05U, 0x04U, 0x11U };
@@ -372,7 +151,7 @@ static void read_live_data(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Read DTCs — uses DtcManager for parsing
+ * Read DTCs
  * ---------------------------------------------------------------------------*/
 
 static void read_dtcs(void)
@@ -542,7 +321,7 @@ static void print_menu(void)
 {
     printf("\n");
     printf("========================================\n");
-    printf("       OBD2 Scanner - MacOS            \n");
+    printf("       OBD2 Scanner BLE - MacOS        \n");
     printf("========================================\n");
     printf("\n");
     printf("  1. Ler dados em tempo real\n");
@@ -563,53 +342,18 @@ static void print_menu(void)
 
 int main(int argc, char* argv[])
 {
-    const char* port = "/dev/tty.OBDLinkMX";
-
-    if (argc > 1) {
-        port = argv[1];
-    }
+    (void)argc;
+    (void)argv;
 
     printf("\n");
     printf("=========================================\n");
-    printf("  OBD2 Scanner para MacOS               \n");
-    printf("  Porta: %s\n", port);
+    printf("  OBD2 Scanner BLE para MacOS           \n");
     printf("=========================================\n");
     printf("\n");
-    printf("Uso: %s [porta_serial] [baudrate]\n", argv[0]);
-    printf("Exemplo: %s /dev/tty.OBDLinkMX\n", argv[0]);
-    printf("         %s /dev/tty.OBDII 9600\n", argv[0]);
-    printf("\n");
 
-    int baudrate = 0;
-    if (argc > 2) {
-        baudrate = atoi(argv[2]);
-    }
+    @autoreleasepool {
 
-    if (serial_open(port, baudrate > 0 ? baudrate : 38400) < 0) {
-        printf("\nDica: Liste portas disponiveis com:\n");
-        printf("  ls /dev/tty.*\n\n");
-        return 1;
-    }
-
-    if (baudrate <= 0) {
-        printf("\n=== Auto-detectando baudrate ===\n\n");
-        baudrate = serial_auto_detect_baudrate();
-
-        if (baudrate < 0) {
-            printf("\n  Nenhum baudrate funcionou.\n");
-            printf("  Verifique:\n");
-            printf("    - Adaptador pareado via Bluetooth\n");
-            printf("    - Ignição do carro na posição ON\n");
-            printf("    - Adaptador plugado na porta OBD2\n\n");
-            serial_close();
-            return 1;
-        }
-
-        printf("\n  Baudrate detectado: %d\n\n", baudrate);
-    } else {
-        printf("Baudrate: %d\n", baudrate);
-    }
-
+    /* Init core modules */
     ErrorHandler_Init(&g_error_handler, error_callback);
 
     LoggerConfig_t log_cfg = {
@@ -617,16 +361,6 @@ int main(int argc, char* argv[])
         .get_timestamp_ms = get_timestamp_ms
     };
     Logger_Init(&g_logger, &log_cfg);
-
-    ElmConfig_t elm_cfg = {
-        .write_callback = elm_write_cb,
-        .read_callback = elm_read_cb,
-        .callback_context = NULL,
-        .get_timestamp_ms = get_timestamp_ms,
-        .error_handler = &g_error_handler,
-        .logger = &g_logger
-    };
-    Elm327_Init(&g_elm, &elm_cfg);
 
     Obd2Config_t obd_cfg = {
         .elm = &g_elm,
@@ -653,16 +387,41 @@ int main(int argc, char* argv[])
     };
     DtcManager_Init(&g_dtc_mgr, &dtc_cfg);
 
+    /* Init LLM */
     const char* groq_key = getenv("GROQ_API_KEY");
     if (groq_key != NULL && groq_key[0] != '\0') {
         if (LlmDtc_InitGroq(&g_llm, groq_key) == RESULT_OK) {
             g_llm_available = true;
-            printf("LLM configurado: Groq (%s)\n", g_llm.config.model);
+            printf("LLM configurado: Groq (%s)\n\n", g_llm.config.model);
         }
     } else {
-        printf("GROQ_API_KEY nao definida — interpretacao IA indisponivel.\n");
-        printf("  export GROQ_API_KEY=gsk_...\n");
+        printf("GROQ_API_KEY nao definida — interpretacao IA indisponivel.\n\n");
     }
+
+    /* Init BLE */
+    g_ble = BleElm327_Create();
+    if (g_ble == NULL) {
+        printf("ERRO: falha ao criar BLE bridge.\n");
+        return 1;
+    }
+
+    printf("=== Conectando via BLE ===\n\n");
+
+    BleElm327_InitDefault(g_ble);
+
+    Result_t r = BleElm327_ScanAndConnect(g_ble);
+
+    if (r != RESULT_OK) {
+        printf("\nFalha ao conectar no ELM327 via BLE.\n");
+        printf("Verifique:\n");
+        printf("  - Bluetooth ligado no Mac\n");
+        printf("  - Adaptador plugado na porta OBD2\n");
+        printf("  - Ignicao na posicao ON\n\n");
+        BleElm327_Destroy(g_ble);
+        return 1;
+    }
+
+    printf("\nConectado em: %s\n", BleElm327_GetDeviceName(g_ble));
 
     init_elm327_sequence();
 
@@ -707,8 +466,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    serial_close();
+    BleElm327_Disconnect(g_ble);
+    BleElm327_Destroy(g_ble);
     printf("\nAte mais!\n\n");
+
+    } /* @autoreleasepool */
 
     return 0;
 }
